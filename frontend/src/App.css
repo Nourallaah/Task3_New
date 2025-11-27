@@ -83,6 +83,119 @@ html, body {
   flex-shrink: 0;
 }
 
+/* Audio Separation Styles */
+.controls-audio-separation {
+  background: #34495E;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid #4A6278;
+  flex-shrink: 0;
+}
+
+.audio-separation-header {
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.audio-separation-header h4 {
+  margin: 0 0 6px 0;
+  color: #ffffff;
+  font-size: 1.1em;
+}
+
+.audio-separation-header p {
+  margin: 0;
+  color: #BDC3C7;
+  font-size: 0.8em;
+  line-height: 1.3;
+}
+
+.separation-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.file-input-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.file-input-label {
+  font-size: 0.9em;
+  color: #BDC3C7;
+  text-align: left;
+}
+
+.file-input {
+  padding: 8px;
+  border: 1px solid #4A6278;
+  border-radius: 4px;
+  background: #2C3E50;
+  color: #ecf0f1;
+  font-size: 0.9em;
+}
+
+.separate-button {
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #9b59b6, #8e44ad);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  min-width: 120px;
+}
+
+.separate-button:disabled {
+  background: #7f8c8d;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.separate-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(155, 89, 182, 0.4);
+}
+
+.separated-tracks {
+  margin-top: 12px;
+  text-align: left;
+}
+
+.separated-tracks h5 {
+  margin: 0 0 8px 0;
+  color: #3498DB;
+  font-size: 1em;
+}
+
+.tracks-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.track-item {
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  background: #2C3E50;
+  border: 1px solid #4A6278;
+  border-radius: 4px;
+  color: #BDC3C7;
+  font-size: 0.85em;
+  transition: all 0.2s ease;
+}
+
+.track-item:hover {
+  background: #3498DB;
+  color: white;
+  transform: translateX(4px);
+}
+
 /* Signal Graphs Container */
 .signal-graphs-container {
   display: flex;

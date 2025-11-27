@@ -6,8 +6,7 @@ import {
   axisBottom, 
   axisLeft, 
   line, 
-  curveMonotoneX,
-  max 
+  curveMonotoneX
 } from 'd3';
 import './FrequencyResponse.css';
 
@@ -15,18 +14,17 @@ const FrequencyResponse = ({ frequencyResponse }) => {
   const svgRef = useRef();
 
   useEffect(() => {
-    // Add debugging
-    console.log('FrequencyResponse component received:', frequencyResponse);
-    
     const svg = select(svgRef.current);
     svg.selectAll("*").remove();
 
-    if (!frequencyResponse) {
-      console.log('No frequency response data available');
-      // Add "No Data" message
+    if (!frequencyResponse || 
+        !frequencyResponse.frequencies || 
+        !frequencyResponse.response ||
+        frequencyResponse.frequencies.length === 0) {
+      
       svg.append("text")
-        .attr("x", 175) // Half of 350 width
-        .attr("y", 60)  // Half of 120 height
+        .attr("x", 175)
+        .attr("y", 60)
         .attr("text-anchor", "middle")
         .style("fill", "#BDC3C7")
         .style("font-size", "12px")
@@ -34,70 +32,35 @@ const FrequencyResponse = ({ frequencyResponse }) => {
       return;
     }
 
-    if (!frequencyResponse.frequencies || !frequencyResponse.magnitude) {
-      console.error('Invalid frequency response structure:', frequencyResponse);
-      svg.append("text")
-        .attr("x", 175)
-        .attr("y", 60)
-        .attr("text-anchor", "middle")
-        .style("fill", "#E74C3C")
-        .style("font-size", "12px")
-        .text("Invalid Data Structure");
-      return;
-    }
-
-    if (frequencyResponse.frequencies.length === 0 || frequencyResponse.magnitude.length === 0) {
-      console.log('Empty frequency response data');
-      svg.append("text")
-        .attr("x", 175)
-        .attr("y", 60)
-        .attr("text-anchor", "middle")
-        .style("fill", "#BDC3C7")
-        .style("font-size", "12px")
-        .text("No Data Points");
-      return;
-    }
-
-    console.log(`Plotting ${frequencyResponse.frequencies.length} frequency response points`);
-
     const margin = { top: 10, right: 8, bottom: 20, left: 30 };
-    const width = 280 - margin.left - margin.right; // Increased width
-    const height = 120 - margin.top - margin.bottom; // Increased height
+    const width = 280 - margin.left - margin.right;
+    const height = 120 - margin.top - margin.bottom;
 
     const g = svg.append("g")
       .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    // Create logarithmic scale for frequency (20Hz to 20kHz)
+    // Create logarithmic scale for frequency
     const xScale = scaleLog()
       .domain([20, 20000])
       .range([0, width])
       .clamp(true);
 
-    // Create linear scale for magnitude (0 to 2, but show from 0 to 2.2 for some headroom)
+    // Create linear scale for response
     const yScale = scaleLinear()
       .domain([0, 2.2])
       .range([height, 0]);
 
     // Create line generator
     const lineGenerator = line()
-      .x(d => xScale(d.frequency))
-      .y(d => yScale(d.magnitude))
+      .x((d, i) => xScale(frequencyResponse.frequencies[i]))
+      .y((d, i) => yScale(frequencyResponse.response[i]))
       .curve(curveMonotoneX);
 
     // Prepare data for plotting
-    const responseData = [];
-    for (let i = 0; i < frequencyResponse.frequencies.length; i++) {
-      const freq = frequencyResponse.frequencies[i];
-      const mag = frequencyResponse.magnitude[i];
-      
-      // Only include valid data points within our frequency range
-      if (freq >= 20 && freq <= 20000 && mag >= 0 && mag <= 2.2) {
-        responseData.push({
-          frequency: freq,
-          magnitude: mag
-        });
-      }
-    }
+    const responseData = frequencyResponse.response.map((response, index) => ({
+      frequency: frequencyResponse.frequencies[index],
+      response: response
+    })).filter(d => d.frequency >= 20 && d.frequency <= 20000);
 
     if (responseData.length === 0) {
       svg.append("text")
@@ -131,8 +94,7 @@ const FrequencyResponse = ({ frequencyResponse }) => {
     // Add axes
     g.append("g")
       .attr("transform", `translate(0,${height})`)
-      .call(axisBottom(xScale)
-        .ticks(5, ".0s"))
+      .call(axisBottom(xScale).ticks(5, ".0s"))
       .append("text")
       .attr("x", width / 2)
       .attr("y", 20)
@@ -172,22 +134,6 @@ const FrequencyResponse = ({ frequencyResponse }) => {
       .attr("stroke-dasharray", "4,4")
       .attr("stroke-width", 1);
 
-    // Add some data point indicators for key frequencies
-    const keyFrequencies = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
-    
-    keyFrequencies.forEach(freq => {
-      const dataPoint = responseData.find(d => Math.abs(d.frequency - freq) < freq * 0.1);
-      if (dataPoint) {
-        g.append("circle")
-          .attr("cx", xScale(dataPoint.frequency))
-          .attr("cy", yScale(dataPoint.magnitude))
-          .attr("r", 2)
-          .attr("fill", "#3498DB")
-          .attr("stroke", "white")
-          .attr("stroke-width", 1);
-      }
-    });
-
   }, [frequencyResponse]);
 
   return (
@@ -195,8 +141,8 @@ const FrequencyResponse = ({ frequencyResponse }) => {
       <h4>Frequency Response</h4>
       <svg
         ref={svgRef}
-        width={320} // Increased from 300
-        height={140} // Increased from 100
+        width={320}
+        height={140}
       />
     </div>
   );

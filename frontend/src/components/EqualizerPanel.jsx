@@ -1,4 +1,4 @@
-// EqualizerPanel.jsx
+import React from 'react';
 import './EqualizerPanel.css';
 import ModePanel from './ModePanel';
 
@@ -24,7 +24,16 @@ const EqualizerPanel = ({
   instrumentData,
   isLoadingInstrumentData,
   selectedInstruments,
-  onInstrumentSelection
+  onInstrumentSelection,
+  // Audio Separation Props
+  onSeparationUpload,
+  onSeparateAudio,
+  isSeparating,
+  separatedTracks,
+  separationFile,
+  outputFolder,
+  playingSeparatedTrack,
+  onPlaySeparatedTrack
 }) => {
 
   const addBand = () => {
@@ -146,6 +155,58 @@ const EqualizerPanel = ({
         <ModePanel {...modePanelProps} maxSelection={3} />
       )}
 
+      {/* Audio Separation Section - Only show in Instruments mode */}
+      {currentMode === 'instruments' && (
+        <div className="audio-separation-section">
+          <div className="separation-header">
+            <h4>🎵 Instrument Separation</h4>
+            <p>Separate music into individual instruments using AI</p>
+          </div>
+          
+          <div className="separation-controls">
+            <div className="file-input-container">
+              <label className="file-input-label">Upload Music File (.wav):</label>
+              <input
+                type="file"
+                accept=".wav"
+                onChange={onSeparationUpload}
+                className="file-input"
+              />
+            </div>
+            
+            <button
+              onClick={onSeparateAudio}
+              disabled={!separationFile || isSeparating}
+              className="btn btn-separate"
+            >
+              {isSeparating ? '🎵 Separating...' : '🎵 Separate Instruments'}
+            </button>
+          </div>
+          
+          {separatedTracks.length > 0 && (
+            <div className="separated-tracks">
+              <h5>🎵 Separated Instruments:</h5>
+              <div className="tracks-list">
+                {separatedTracks.map((track, index) => (
+                  <div key={index} className={`track-item ${playingSeparatedTrack === (track.name || track) ? 'playing' : ''}`}>
+                    <span className="track-name">
+                      🎵 {typeof track === 'string' ? track : track.name || 'Unknown Track'}
+                    </span>
+                    <button
+                      onClick={() => onPlaySeparatedTrack(track)}
+                      disabled={playingSeparatedTrack === (track.name || track)}
+                      className="btn-play-track"
+                    >
+                      {playingSeparatedTrack === (track.name || track) ? '🔊 Playing...' : '▶ Play'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="control-buttons">
         {currentMode === 'generic' && (
           <button onClick={addBand} className="btn btn-add">
@@ -160,11 +221,7 @@ const EqualizerPanel = ({
         </button>
         
         {/* File Upload Button */}
-        <label className="btn btn-upload" style={{ 
-          background: 'linear-gradient(135deg, #27AE60, #2ECC71)',
-          color: 'white',
-          cursor: 'pointer'
-        }}>
+        <label className="btn btn-upload">
           Upload WAV
           <input
             type="file"
@@ -178,6 +235,14 @@ const EqualizerPanel = ({
           Save
         </button>
       </div>
+
+      {/* Processing Status */}
+      {isProcessing && (
+        <div className="processing-status">
+          <div className="spinner"></div>
+          <span>Processing audio...</span>
+        </div>
+      )}
     </div>
   );
 };

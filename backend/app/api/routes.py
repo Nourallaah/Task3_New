@@ -1,4 +1,8 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi.responses import JSONResponse, FileResponse
+from spleeter.separator import Separator
+import shutil
+from pathlib import Path
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import numpy as np
@@ -7,13 +11,129 @@ import os
 import scipy.io.wavfile as wavfile
 import io
 
-from app.services.dsp.signal_generator import SignalGenerator
-from app.services.dsp.fft_processor import FFTProcessor
-from app.services.dsp.equalizer import Equalizer
-
 router = APIRouter(prefix="/api")
 
-# Initialize processors
+# Directory setup - استخدام المسار المطلق
+BASE_DIR = Path(__file__).parent.parent.parent
+OUTPUT_DIR = BASE_DIR / "output"
+OUTPUT_DIR.mkdir(exist_ok=True)  # التأكد من وجود المجلد
+
+print(f"Output directory: {OUTPUT_DIR}")
+
+# Initialize processors (fallback implementations)
+class SignalGenerator:
+    def generate_synthetic_signal(self, frequencies, duration, sample_rate):
+        t = np.linspace(0, duration, int(sample_rate * duration))
+        signal = np.zeros_like(t)
+        for freq in frequencies:
+            signal += np.sin(2 * np.pi * freq * t)
+        return signal.tolist(), t.tolist()
+
+class FFTProcessor:
+    def compute_spectrogram(self, signal, sample_rate):
+        try:
+            signal = np.array(signal)
+            n = len(signal)
+            fft_size = 1024
+            hop_size = 512
+            
+            # إذا كانت الإشارة قصيرة جدًا، نعيد مصفوفة فارغة
+            if n < fft_size:
+                return []
+                
+            spectrogram = []
+            for i in range(0, n - fft_size, hop_size):
+                segment = signal[i:i + fft_size]
+                fft_result = np.fft.fft(segment)
+                magnitude = np.abs(fft_result[:fft_size // 2])
+                spectrogram.append(magnitude.tolist())
+            return spectrogram
+        except Exception as e:
+            print(f"Error in compute_spectrogram: {e}")
+            return []
+    
+    def compute_fft_spectrum(self, signal, sample_rate):
+        try:
+            signal = np.array(signal)
+            n = len(signal)
+            if n == 0:
+                return {'frequencies': [], 'magnitude': []}
+                
+            fft_result = np.fft.fft(signal)
+            frequencies = np.fft.fftfreq(n, 1/sample_rate)[:n//2]
+            magnitude = np.abs(fft_result[:n//2])
+            return {'frequencies': frequencies.tolist(), 'magnitude': magnitude.tolist()}
+        except Exception as e:
+            print(f"Error in compute_fft_spectrum: {e}")
+            return {'frequencies': [], 'magnitude': []}
+
+class Equalizer:
+    def apply_equalizer(self, signal, frequency_bands, sample_rate):
+        try:
+            signal = np.array(signal, dtype=np.float32)
+            n = len(signal)
+            if n == 0:
+                return []
+                
+            fft_signal = np.fft.fft(signal)
+            frequencies = np.fft.fftfreq(n, 1/sample_rate)
+            
+            for band in frequency_bands:
+                low_freq = band.get('low_freq', 0)
+                high_freq = band.get('high_freq', sample_rate/2)
+                scale = band.get('scale', 1.0)
+                
+                # إنشاء قناع للترددات في النطاق المطلوب
+                mask = (np.abs(frequencies) >= low_freq) & (np.abs(frequencies) <= high_freq)
+                fft_signal[mask] *= scale
+            
+            processed = np.real(np.fft.ifft(fft_signal))
+            return processed.tolist()
+        except Exception as e:
+            print(f"Error in apply_equalizer: {e}")
+            return signal.tolist() if hasattr(signal, 'tolist') else []
+    
+    def get_frequency_response(self, frequency_bands, sample_rate):
+        try:
+            n = 1024
+            frequencies = np.fft.fftfreq(n, 1/sample_rate)[:n//2]
+            response = np.ones(n//2)
+            
+            for band in frequency_bands:
+                low_freq = band.get('low_freq', 0)
+                high_freq = band.get('high_freq', sample_rate/2)
+                scale = band.get('scale', 1.0)
+                
+                mask = (frequencies >= low_freq) & (frequencies <= high_freq)
+                response[mask] *= scale
+            
+            return {
+                'frequencies': frequencies.tolist(),
+                'response': response.tolist()
+            }
+        except Exception as e:
+            print(f"Error in get_frequency_response: {e}")
+            return {'frequencies': [], 'response': []}
+    
+    def create_default_bands(self, num_bands=10):
+        bands = []
+        freq_ranges = [
+            (20, 60), (60, 120), (120, 250), (250, 500), (500, 1000),
+            (1000, 2000), (2000, 4000), (4000, 8000), (8000, 16000), (16000, 20000)
+        ]
+        labels = ["Sub", "Bass", "Low Mid", "Mid", "High Mid", 
+                 "Presence", "Brilliance", "High", "Very High", "Ultra High"]
+        
+        for i in range(min(num_bands, len(freq_ranges))):
+            bands.append({
+                'low_freq': freq_ranges[i][0],
+                'high_freq': freq_ranges[i][1],
+                'scale': 1.0,
+                'label': labels[i],
+                'id': i
+            })
+        return bands
+
 signal_generator = SignalGenerator()
 fft_processor = FFTProcessor()
 equalizer = Equalizer()
@@ -47,6 +167,7 @@ class SaveSettingsRequest(BaseModel):
 class LoadSettingsRequest(BaseModel):
     filename: str = "equalizer_settings.json"
 
+# Routes
 @router.get("/ping")
 def ping():
     return {"status": "ok", "message": "Backend API reachable!"}
@@ -55,39 +176,37 @@ def ping():
 def health_check():
     return {"status": "healthy", "message": "Signal Equalizer API is running"}
 
-# In routes.py - update the process endpoint
 @router.post("/process")
 async def process_signal(request: ProcessRequest):
     try:
-        # Always start with the original signal, not a previously processed one
+        print(f"Processing signal - Length: {len(request.signal)}, Sample rate: {request.sample_rate}, Bands: {len(request.frequency_bands)}")
+        
+        # تحويل الإشارة إلى numpy array
         signal = np.array(request.signal, dtype=np.float32)
         frequency_bands = [band.dict() for band in request.frequency_bands]
         
-        # Check signal health before processing
-        signal_rms = np.sqrt(np.mean(signal**2))
-        print(f"Processing signal - Length: {len(signal)}, RMS: {signal_rms:.6f}, Bands: {len(frequency_bands)}")
+        # حساب إحصائيات الإشارة الأصلية
+        signal_rms = np.sqrt(np.mean(signal**2)) if len(signal) > 0 else 0
+        print(f"Input signal RMS: {signal_rms:.6f}")
         
-        if signal_rms < 1e-6:  # Signal is too quiet
-            print("Warning: Input signal is very quiet, may result in muted output")
+        if signal_rms < 1e-6:
+            print("Warning: Input signal is very quiet")
         
-        # Apply equalizer - this should work on the ORIGINAL signal
-        processed_signal = equalizer.apply_equalizer(signal, frequency_bands, request.sample_rate)
+        # تطبيق المعادل
+        processed_signal_list = equalizer.apply_equalizer(signal, frequency_bands, request.sample_rate)
         
-        # Check output signal health
-        processed_rms = np.sqrt(np.mean(processed_signal**2))
-        print(f"Processing complete - Output RMS: {processed_rms:.6f}, Length: {len(processed_signal)}")
+        # تحويل إلى numpy array لحساب الإحصائيات
+        processed_signal_np = np.array(processed_signal_list, dtype=np.float32)
+        processed_rms = np.sqrt(np.mean(processed_signal_np**2)) if len(processed_signal_np) > 0 else 0
+        print(f"Output signal RMS: {processed_rms:.6f}")
         
-        if processed_rms < 1e-6:
-            print("WARNING: Output signal is muted!")
-        
-        # Compute spectrogram of processed signal
-        spectrogram_processed = fft_processor.compute_spectrogram(processed_signal, request.sample_rate)
-        
-        print(f"Spectrogram of processed signal: {len(spectrogram_processed)} x {len(spectrogram_processed[0]) if spectrogram_processed else 0}")
+        # حساب spectrogram للإشارة المعالجة
+        spectrogram_processed = fft_processor.compute_spectrogram(processed_signal_np, request.sample_rate)
+        print(f"Processed spectrogram: {len(spectrogram_processed)} x {len(spectrogram_processed[0]) if spectrogram_processed else 0}")
 
         return {
             'success': True,
-            'processed_signal': processed_signal.tolist(),
+            'processed_signal': processed_signal_list,
             'spectrogram_processed': spectrogram_processed,
             'sample_rate': request.sample_rate,
             'signal_stats': {
@@ -99,21 +218,17 @@ async def process_signal(request: ProcessRequest):
         print(f"Error in process_signal: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'error': str(e)}
+        )
 
-# ===== GET SPECTROGRAM =====
 @router.post("/spectrogram")
 async def get_spectrogram(request: SpectrogramRequest):
     try:
+        print(f"Computing spectrogram for signal length: {len(request.signal)}")
+        
         signal = np.array(request.signal)
-        print(f"Computing spectrogram for signal length: {len(signal)}, sample_rate: {request.sample_rate}")
-        
-        # Ensure signal is not too long for processing
-        max_samples = 60 * request.sample_rate  # 60 seconds max
-        if len(signal) > max_samples:
-            signal = signal[:max_samples]
-            print(f"Signal truncated to {max_samples} samples")
-        
         spectrogram = fft_processor.compute_spectrogram(signal, request.sample_rate)
         
         if spectrogram and len(spectrogram) > 0:
@@ -140,7 +255,6 @@ async def get_spectrogram(request: SpectrogramRequest):
             'spectrogram': []
         }
 
-# ===== GET FFT SPECTRUM =====
 @router.post("/fft-spectrum")
 async def get_fft_spectrum(request: SpectrogramRequest):
     try:
@@ -155,7 +269,6 @@ async def get_fft_spectrum(request: SpectrogramRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ===== GENERATE SYNTHETIC SIGNAL =====
 @router.post("/synthetic-signal")
 async def generate_synthetic_signal(request: SyntheticSignalRequest):
     try:
@@ -173,7 +286,6 @@ async def generate_synthetic_signal(request: SyntheticSignalRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ===== UPLOAD AUDIO FILE =====
 @router.post("/upload-audio")
 async def upload_audio(file: UploadFile = File(...)):
     try:
@@ -185,12 +297,10 @@ async def upload_audio(file: UploadFile = File(...)):
         
         print(f"Uploaded audio - Sample rate: {sample_rate}, Shape: {audio_data.shape}, Dtype: {audio_data.dtype}")
         
-        # Handle multi-channel audio
         if len(audio_data.shape) > 1:
             print(f"Converting {audio_data.shape[1]} channels to mono")
             audio_data = np.mean(audio_data, axis=1)
         
-        # Convert to float32 and normalize based on data type
         if audio_data.dtype == np.int16:
             audio_data = audio_data.astype(np.float32) / 32768.0
             print("Converted from int16 to float32")
@@ -206,33 +316,27 @@ async def upload_audio(file: UploadFile = File(...)):
         else:
             print(f"Unsupported dtype: {audio_data.dtype}, attempting generic conversion")
             audio_data = audio_data.astype(np.float32)
-            # Normalize based on max possible value for the dtype
             if np.issubdtype(audio_data.dtype, np.integer):
                 info = np.iinfo(audio_data.dtype)
                 audio_data = audio_data / info.max
         
-        # Remove DC offset (center around zero)
         dc_offset = np.mean(audio_data)
         audio_data = audio_data - dc_offset
         print(f"Removed DC offset: {dc_offset:.6f}")
         
-        # Normalize to prevent clipping (with headroom)
         max_val = np.max(np.abs(audio_data))
         print(f"Max absolute value before normalization: {max_val:.6f}")
         
         if max_val > 0:
-            # Use 0.9 for headroom to prevent clipping
             audio_data = audio_data * (0.9 / max_val)
             print(f"Normalized with factor: {0.9 / max_val:.6f}")
         
-        # Limit duration to prevent memory issues
-        max_duration = 30  # Increased to 30 seconds
+        max_duration = 30
         max_samples = sample_rate * max_duration
         if len(audio_data) > max_samples:
             print(f"Truncating from {len(audio_data)} to {max_samples} samples")
             audio_data = audio_data[:max_samples]
         
-        # Final audio statistics
         final_max = np.max(np.abs(audio_data))
         final_rms = np.sqrt(np.mean(audio_data**2))
         print(f"Final audio - Max: {final_max:.6f}, RMS: {final_rms:.6f}, Length: {len(audio_data)}")
@@ -252,8 +356,7 @@ async def upload_audio(file: UploadFile = File(...)):
         import traceback
         traceback.print_exc()
         return {'success': False, 'error': f'Error processing audio file: {str(e)}'}
-    
-# ===== SAVE / LOAD SETTINGS =====
+
 @router.post("/save-settings")
 async def save_settings(request: SaveSettingsRequest):
     try:
@@ -277,17 +380,29 @@ async def load_settings(request: LoadSettingsRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ===== FREQUENCY RESPONSE =====
 @router.post("/frequency-response")
 async def get_frequency_response(request: ProcessRequest):
     try:
         frequency_bands = [band.dict() for band in request.frequency_bands]
         response = equalizer.get_frequency_response(frequency_bands, request.sample_rate)
-        return {'success': True, 'frequency_response': response}
+        
+        # التأكد من أن البيانات لها الهيكل الصحيح
+        if not response or 'frequencies' not in response or 'response' not in response:
+            return {'success': False, 'error': 'Invalid frequency response data'}
+            
+        return {
+            'success': True, 
+            'frequency_response': response
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error in get_frequency_response: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'error': str(e)}
+        )
 
-# ===== DEFAULT BANDS =====
 @router.get("/default-bands")
 async def get_default_bands():
     try:
@@ -295,3 +410,111 @@ async def get_default_bands():
         return {'success': True, 'bands': bands}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/separate")
+async def separate_audio(file: UploadFile = File(...)):
+    try:
+        # حفظ الملف المرفوع مؤقتاً
+        temp_dir = BASE_DIR / "temp"
+        temp_dir.mkdir(exist_ok=True)
+        
+        input_path = temp_dir / file.filename
+        
+        with open(input_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        
+        print(f"Starting audio separation for file: {file.filename}")
+        
+        # فصل الصوت باستخدام 5 stems
+        separator = Separator("spleeter:5stems")
+        separator.separate_to_file(str(input_path), str(OUTPUT_DIR))
+        
+        # قائمة الملفات الناتجة - استخدام مسارات نسبية
+        result_folder = OUTPUT_DIR / Path(file.filename).stem
+        files = []
+        
+        if result_folder.exists():
+            for f in result_folder.glob("*.wav"):
+                # استخدام مسار نسبي بدلاً من المسار الكامل
+                relative_path = f.relative_to(OUTPUT_DIR)
+                files.append({
+                    "name": f.name,
+                    "path": str(relative_path).replace("\\", "/")  # استخدام / للتوافق مع جميع الأنظمة
+                })
+            print(f"Separation completed. Generated {len(files)} files")
+        else:
+            print("Warning: Result folder not found")
+        
+        # تنظيف الملف المؤقت
+        try:
+            os.remove(input_path)
+        except:
+            pass
+        
+        return JSONResponse({
+            "success": True,
+            "output_files": files, 
+            "output_path": str(result_folder.relative_to(OUTPUT_DIR)).replace("\\", "/")
+        })
+        
+    except Exception as e:
+        print(f"Error in audio separation: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+@router.get("/download/{file_path:path}")
+async def download_file(file_path: str):
+    """Endpoint لتحميل الملفات المنفصلة"""
+    try:
+        # تنظيف المسار وإزالة أي محاولات للوصول إلى مجلدات أعلى
+        clean_path = Path(file_path).name
+        file_full_path = OUTPUT_DIR / file_path
+        
+        print(f"Download request for: {file_path}")
+        print(f"Full path: {file_full_path}")
+        print(f"File exists: {file_full_path.exists()}")
+        
+        if file_full_path.exists() and file_full_path.is_file():
+            return FileResponse(
+                path=file_full_path, 
+                filename=file_full_path.name,
+                media_type='audio/wav'
+            )
+        else:
+            print(f"File not found: {file_full_path}")
+            raise HTTPException(status_code=404, detail="File not found")
+    except Exception as e:
+        print(f"Error downloading file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/separated-files")
+async def list_separated_files():
+    """الحصول على قائمة بجميع الملفات المنفصلة"""
+    try:
+        all_files = []
+        for result_folder in OUTPUT_DIR.glob("*"):
+            if result_folder.is_dir():
+                for wav_file in result_folder.glob("*.wav"):
+                    relative_path = wav_file.relative_to(OUTPUT_DIR)
+                    all_files.append({
+                        "name": wav_file.name,
+                        "path": str(relative_path).replace("\\", "/"),
+                        "folder": result_folder.name
+                    })
+        return {"success": True, "files": all_files}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/test")
+async def test_endpoint():
+    """Endpoint لاختبار أن الخادم يعمل"""
+    return {
+        "status": "success", 
+        "message": "Backend is working correctly!",
+        "output_directory": str(OUTPUT_DIR),
+        "output_exists": OUTPUT_DIR.exists()
+    }

@@ -1,4 +1,3 @@
-// App.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import EqualizerPanel from './components/EqualizerPanel';
@@ -37,15 +36,9 @@ function useDebounce(value, delay) {
 
 // Enhanced normalization with proper error handling
 const normalizeSpectrograms = (inputSpectrogram, outputSpectrogram) => {
-  // Check if spectrograms are valid 2D arrays
   if (!inputSpectrogram || !outputSpectrogram || 
       !Array.isArray(inputSpectrogram) || !Array.isArray(outputSpectrogram) ||
-      inputSpectrogram.length === 0 || outputSpectrogram.length === 0 ||
-      !Array.isArray(inputSpectrogram[0]) || !Array.isArray(outputSpectrogram[0])) {
-    console.error('Invalid spectrogram data:', {
-      input: inputSpectrogram,
-      output: outputSpectrogram
-    });
+      inputSpectrogram.length === 0 || outputSpectrogram.length === 0) {
     return { 
       normalizedInput: null, 
       normalizedOutput: null,
@@ -53,7 +46,6 @@ const normalizeSpectrograms = (inputSpectrogram, outputSpectrogram) => {
     };
   }
   
-  // Ensure both spectrograms have the same dimensions
   const minRows = Math.min(inputSpectrogram.length, outputSpectrogram.length);
   const minCols = Math.min(
     inputSpectrogram[0]?.length || 0, 
@@ -61,7 +53,6 @@ const normalizeSpectrograms = (inputSpectrogram, outputSpectrogram) => {
   );
   
   if (minRows === 0 || minCols === 0) {
-    console.error('Spectrograms have zero dimensions');
     return { 
       normalizedInput: null, 
       normalizedOutput: null,
@@ -69,14 +60,12 @@ const normalizeSpectrograms = (inputSpectrogram, outputSpectrogram) => {
     };
   }
   
-  console.log(`Spectrogram dimensions: ${minRows}x${minCols}`);
-  
-  // Convert to dB scale first for better visualization
+  // Convert to dB scale
   const toDB = (spectrogram) => {
     return spectrogram.map(row => 
       row.map(value => {
-        const db = 10 * Math.log10(Math.max(1e-10, value)); // Avoid log(0)
-        return Math.max(-100, Math.min(0, db)); // Clip to reasonable range
+        const db = 10 * Math.log10(Math.max(1e-10, value));
+        return Math.max(-100, Math.min(0, db));
       })
     );
   };
@@ -84,7 +73,6 @@ const normalizeSpectrograms = (inputSpectrogram, outputSpectrogram) => {
   const inputDB = toDB(inputSpectrogram);
   const outputDB = toDB(outputSpectrogram);
   
-  // Find global min and max across both spectrograms in dB
   let globalMin = Infinity;
   let globalMax = -Infinity;
   
@@ -105,22 +93,15 @@ const normalizeSpectrograms = (inputSpectrogram, outputSpectrogram) => {
     }
   }
   
-  // If all values are the same, use default range
   if (globalMin === globalMax || !isFinite(globalMin) || !isFinite(globalMax)) {
     globalMin = -80;
     globalMax = 0;
-    console.log('Using default spectrogram range');
   }
-  
-  console.log(`Global spectrogram range: ${globalMin.toFixed(2)} dB to ${globalMax.toFixed(2)} dB`);
   
   // Normalize dB values to [0,1]
   const normalizeDB = (dbSpectrogram) => {
     return dbSpectrogram.map(row => 
-      row.map(dbValue => {
-        // Convert from dB range to [0, 1]
-        return (dbValue - globalMin) / (globalMax - globalMin);
-      })
+      row.map(dbValue => (dbValue - globalMin) / (globalMax - globalMin))
     );
   };
   
@@ -134,12 +115,9 @@ const normalizeSpectrograms = (inputSpectrogram, outputSpectrogram) => {
     for (let j = 0; j < minCols; j++) {
       const inputVal = inputSpectrogram[i]?.[j] || 1e-10;
       const outputVal = outputSpectrogram[i]?.[j] || 1e-10;
-      
-      // Calculate ratio in dB (positive = boost, negative = cut)
       const ratio = outputVal / Math.max(1e-10, inputVal);
-      const diffDB = 10 * Math.log10(Math.max(1e-3, Math.min(1e3, ratio))); // Limit range
-      // Normalize to [-1, 1] for visualization
-      const normalizedDiff = Math.max(-1, Math.min(1, diffDB / 12)); // More sensitive scaling
+      const diffDB = 10 * Math.log10(Math.max(1e-3, Math.min(1e3, ratio)));
+      const normalizedDiff = Math.max(-1, Math.min(1, diffDB / 12));
       diffRow.push(normalizedDiff);
     }
     differenceSpectrogram.push(diffRow);
@@ -177,6 +155,13 @@ function App() {
   const [selectedHumans, setSelectedHumans] = useState([]);
   const [selectedInstruments, setSelectedInstruments] = useState([]);
   
+  // Audio Separation States
+  const [separationFile, setSeparationFile] = useState(null);
+  const [isSeparating, setIsSeparating] = useState(false);
+  const [separatedTracks, setSeparatedTracks] = useState([]);
+  const [outputFolder, setOutputFolder] = useState('');
+  const [playingSeparatedTrack, setPlayingSeparatedTrack] = useState(null);
+
   // Use unified mode data hook
   const { data: animalData, isLoading: isLoadingAnimalData } = useModeData('animals');
   const { data: humanData, isLoading: isLoadingHumanData } = useModeData('humans');
@@ -185,10 +170,6 @@ function App() {
   
   // Add refs to track the original signal and previous values
   const originalSignalRef = useRef([]);
-  const prevNormalizedInputRef = useRef(null);
-  const prevNormalizedOutputRef = useRef(null);
-  const prevInputSpectrogramRef = useRef(null);
-  const prevOutputSpectrogramRef = useRef(null);
 
   // Update the ref whenever originalSignal changes
   useEffect(() => {
@@ -249,51 +230,21 @@ function App() {
     }
   }, [selectedInstruments, currentMode]);
 
-  // Optimized: Update normalized spectrograms when raw spectrograms change
+  // Update normalized spectrograms when raw spectrograms change
   useEffect(() => {
     if (inputSpectrogram && outputSpectrogram && 
         Array.isArray(inputSpectrogram) && Array.isArray(outputSpectrogram) &&
         inputSpectrogram.length > 0 && outputSpectrogram.length > 0) {
       
-      // Check if spectrograms actually changed
-      const inputChanged = inputSpectrogram !== prevInputSpectrogramRef.current;
-      const outputChanged = outputSpectrogram !== prevOutputSpectrogramRef.current;
+      const { normalizedInput, normalizedOutput, differenceSpectrogram } = normalizeSpectrograms(inputSpectrogram, outputSpectrogram);
       
-      if (inputChanged || outputChanged) {
-        console.log('Spectrograms changed - normalizing:', { inputChanged, outputChanged });
-        
-        const { normalizedInput, normalizedOutput, differenceSpectrogram } = normalizeSpectrograms(inputSpectrogram, outputSpectrogram);
-        
-        // Only update normalized input if input spectrogram changed
-        if (inputChanged && normalizedInput !== prevNormalizedInputRef.current) {
-          setNormalizedInputSpectrogram(normalizedInput);
-          prevNormalizedInputRef.current = normalizedInput;
-        }
-        
-        // Only update normalized output if output spectrogram changed
-        if (outputChanged && normalizedOutput !== prevNormalizedOutputRef.current) {
-          setNormalizedOutputSpectrogram(normalizedOutput);
-          prevNormalizedOutputRef.current = normalizedOutput;
-        }
-        
-        setDifferenceSpectrogram(differenceSpectrogram);
-        
-        // Update previous references
-        prevInputSpectrogramRef.current = inputSpectrogram;
-        prevOutputSpectrogramRef.current = outputSpectrogram;
-      } else {
-        console.log('Spectrograms unchanged - skipping normalization');
-      }
-      
+      setNormalizedInputSpectrogram(normalizedInput);
+      setNormalizedOutputSpectrogram(normalizedOutput);
+      setDifferenceSpectrogram(differenceSpectrogram);
     } else {
-      // Reset if spectrograms are invalid
       setNormalizedInputSpectrogram(null);
       setNormalizedOutputSpectrogram(null);
       setDifferenceSpectrogram(null);
-      prevNormalizedInputRef.current = null;
-      prevNormalizedOutputRef.current = null;
-      prevInputSpectrogramRef.current = null;
-      prevOutputSpectrogramRef.current = null;
     }
   }, [inputSpectrogram, outputSpectrogram]);
 
@@ -393,19 +344,14 @@ function App() {
     setCurrentMode(mode);
     
     if (mode === 'generic') {
-      // Only reset when explicitly switching TO generic mode
       resetToGenericMode();
     } else if (mode === 'animals' && animalData && animalData.modes.custom_generated.length > 0) {
-      // Select first 3 animals by default and generate bands
       const initialAnimals = animalData.modes.custom_generated.slice(0, 3);
       setSelectedAnimals(initialAnimals);
-      // Bands will be generated by the useEffect above
     } else if (mode === 'humans' && humanData && humanData.modes.custom_generated.length > 0) {
-      // Select first 3 humans by default and generate bands
       const initialHumans = humanData.modes.custom_generated.slice(0, 3);
       setSelectedHumans(initialHumans);
     } else if (mode === 'instruments' && instrumentData && instrumentData.modes.custom_generated.length > 0) {
-      // Select first 3 instruments by default and generate bands
       const initialInstruments = instrumentData.modes.custom_generated.slice(0, 3);
       setSelectedInstruments(initialInstruments);
     }
@@ -452,54 +398,129 @@ function App() {
     }
   };
 
- // In App.jsx - update the processAudio function
-const processAudio = async () => {
-  if (!originalSignal.length) return;
-  
-  setIsProcessing(true);
-  try {
-    console.log('Processing audio with original signal length:', originalSignal.length);
-    
-    const response = await fetch(`${API_BASE}/process`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        signal: originalSignal, // Always use ORIGINAL signal, not processedSignal
-        frequency_bands: frequencyBands,
-        sample_rate: sampleRate
-      })
-    });
-    
-    const data = await response.json();
-    if (data.success) {
-      console.log('Processing complete, setting processed signal:', data.processed_signal.length);
-      console.log('Signal stats:', data.signal_stats);
-      
-      setProcessedSignal(data.processed_signal);
-      
-      // Update spectrograms with ORIGINAL and PROCESSED signals
-      updateSpectrograms(originalSignal, data.processed_signal);
-    }
-  } catch (error) {
-    console.error('Error processing audio:', error);
-  } finally {
-    setIsProcessing(false);
-  }
-};
+  // Audio Separation Functions
+  const handleSeparationUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
 
-// Also add a debug function to check signal health
-const checkSignalHealth = (signal, name) => {
-  if (!signal || signal.length === 0) {
-    console.log(`${name}: Empty signal`);
-    return;
-  }
-  
-  const max = Math.max(...signal);
-  const min = Math.min(...signal);
-  const rms = Math.sqrt(signal.reduce((sum, val) => sum + val * val, 0) / signal.length);
-  
-  console.log(`${name} Health - Max: ${max.toFixed(6)}, Min: ${min.toFixed(6)}, RMS: ${rms.toFixed(6)}`);
-};
+    if (!file.name.toLowerCase().endsWith('.wav')) {
+      alert('Please upload a WAV file for separation');
+      return;
+    }
+
+    setSeparationFile(file);
+    setSeparatedTracks([]);
+    setOutputFolder('');
+  };
+
+  const handleSeparateAudio = async () => {
+    if (!separationFile) return;
+
+    setIsSeparating(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', separationFile);
+
+      const response = await fetch(`${API_BASE}/separate`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setSeparatedTracks(data.output_files);
+        setOutputFolder(data.output_path);
+        alert(`Audio separated successfully! Generated ${data.output_files.length} tracks.`);
+      } else {
+        alert('Error separating audio: ' + (data.error || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error separating audio:', error);
+      alert('Error separating audio. Please try again.');
+    } finally {
+      setIsSeparating(false);
+    }
+  };
+
+  // FIXED: Play separated track function
+  const playSeparatedTrack = async (track) => {
+    try {
+      // التعامل مع كل أنواع البيانات
+      let trackName, trackPath;
+      
+      if (typeof track === 'string') {
+        trackName = track;
+        trackPath = track;
+      } else {
+        trackName = track.name || 'Unknown Track';
+        trackPath = track.path || track.name;
+      }
+      
+      setPlayingSeparatedTrack(trackName);
+      
+      // تنظيف المسار
+      const cleanPath = trackPath.replace(/\\/g, '/');
+      const trackUrl = `${API_BASE}/download/${cleanPath}`;
+      
+      console.log('Attempting to play track:', trackUrl);
+      
+      const audio = new Audio(trackUrl);
+      audio.onended = () => setPlayingSeparatedTrack(null);
+      audio.onerror = (e) => {
+        console.error('Audio playback error:', e);
+        setPlayingSeparatedTrack(null);
+        alert(`Error playing track: ${trackName}`);
+      };
+      
+      await audio.play();
+    } catch (error) {
+      console.error('Error playing separated track:', error);
+      setPlayingSeparatedTrack(null);
+      alert(`Error playing track: ${typeof track === 'string' ? track : track.name}`);
+    }
+  };
+
+  // Process audio function
+  const processAudio = async () => {
+    if (!originalSignal.length) return;
+    
+    setIsProcessing(true);
+    try {
+      console.log('Processing audio with original signal length:', originalSignal.length);
+      
+      const response = await fetch(`${API_BASE}/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          signal: originalSignal,
+          frequency_bands: frequencyBands,
+          sample_rate: sampleRate
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      if (data.success) {
+        console.log('Processing complete, setting processed signal:', data.processed_signal.length);
+        
+        setProcessedSignal(data.processed_signal);
+        
+        // Update spectrograms with ORIGINAL and PROCESSED signals
+        updateSpectrograms(originalSignal, data.processed_signal);
+      } else {
+        console.error('Backend processing failed:', data);
+        alert('Error processing audio: ' + (data.error || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error processing audio:', error);
+      alert('Error processing audio. Please check the console for details.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   // Modified updateSpectrograms
   const updateSpectrograms = async (inputSignal, outputSignal) => {
@@ -512,44 +533,16 @@ const checkSignalHealth = (signal, name) => {
         return;
       }
 
-      // Check if input signal is the same as our stored original
-      const isSameInput = inputSignal.length === originalSignalRef.current.length && 
-                         inputSignal[0] === originalSignalRef.current[0]; // Simple check
+      // Always update both spectrograms
+      const inputResponse = await fetch(`${API_BASE}/spectrogram`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          signal: inputSignal, 
+          sample_rate: sampleRate
+        })
+      });
       
-      console.log('Input signal unchanged:', isSameInput, 'Input length:', inputSignal.length, 'Stored length:', originalSignalRef.current.length);
-
-      if (!isSameInput) {
-        // Update input spectrogram only if input signal is different
-        const inputResponse = await fetch(`${API_BASE}/spectrogram`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            signal: inputSignal, 
-            sample_rate: sampleRate
-          })
-        });
-        
-        if (!inputResponse.ok) {
-          throw new Error(`HTTP error! status: ${inputResponse.status}`);
-        }
-        
-        const inputData = await inputResponse.json();
-        
-        if (inputData.success && inputData.spectrogram) {
-          console.log('Input spectrogram received:', {
-            rows: inputData.spectrogram.length,
-            cols: inputData.spectrogram[0]?.length || 0
-          });
-          setInputSpectrogram(inputData.spectrogram);
-        } else {
-          console.error('Input spectrogram error:', inputData.error || 'No spectrogram data');
-          setInputSpectrogram(null);
-        }
-      } else {
-        console.log('Skipping input spectrogram update - signal unchanged');
-      }
-
-      // Always update output spectrogram
       const outputResponse = await fetch(`${API_BASE}/spectrogram`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -559,29 +552,21 @@ const checkSignalHealth = (signal, name) => {
         })
       });
       
-      if (!outputResponse.ok) {
-        throw new Error(`HTTP error! status: ${outputResponse.status}`);
+      if (inputResponse.ok) {
+        const inputData = await inputResponse.json();
+        if (inputData.success && inputData.spectrogram) {
+          setInputSpectrogram(inputData.spectrogram);
+        }
       }
       
-      const outputData = await outputResponse.json();
-      
-      if (outputData.success && outputData.spectrogram) {
-        console.log('Output spectrogram received:', {
-          rows: outputData.spectrogram.length,
-          cols: outputData.spectrogram[0]?.length || 0
-        });
-        setOutputSpectrogram(outputData.spectrogram);
-      } else {
-        console.error('Output spectrogram error:', outputData.error || 'No spectrogram data');
-        setOutputSpectrogram(null);
+      if (outputResponse.ok) {
+        const outputData = await outputResponse.json();
+        if (outputData.success && outputData.spectrogram) {
+          setOutputSpectrogram(outputData.spectrogram);
+        }
       }
     } catch (error) {
       console.error('Error updating spectrograms:', error);
-      // Only reset if it's not a processing update (when input signal actually changed)
-      if (!originalSignalRef.current.length || inputSignal[0] !== originalSignalRef.current[0]) {
-        setInputSpectrogram(null);
-      }
-      setOutputSpectrogram(null);
     }
   };
 
@@ -590,8 +575,6 @@ const checkSignalHealth = (signal, name) => {
     
     setIsLoadingFrequencyResponse(true);
     try {
-      console.log('Updating frequency response with bands:', frequencyBands);
-      
       const response = await fetch(`${API_BASE}/frequency-response`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -607,15 +590,13 @@ const checkSignalHealth = (signal, name) => {
       }
       
       const data = await response.json();
-      console.log('Frequency response data received:', data);
       
-      if (data.success) {
+      if (data.success && data.frequency_response) {
         setFrequencyResponse(data.frequency_response);
-      } else {
-        console.error('Backend returned success: false', data);
       }
     } catch (error) {
       console.error('Error updating frequency response:', error);
+      setFrequencyResponse(null);
     } finally {
       setIsLoadingFrequencyResponse(false);
     }
@@ -648,10 +629,8 @@ const checkSignalHealth = (signal, name) => {
   // Also update the resetEqualizer function to preserve mode-specific bands:
   const resetEqualizer = () => {
     if (currentMode === 'generic') {
-      // For generic mode, reset to default bands
       resetFrequencyBands();
     } else {
-      // For mode-specific bands, reset scales to 1.0 but keep the bands
       const resetBands = frequencyBands.map(band => ({
         ...band,
         scale: 1.0
@@ -677,28 +656,6 @@ const checkSignalHealth = (signal, name) => {
     if (frequencyBands.length > 1) {
       const newBands = frequencyBands.filter((_, i) => i !== index);
       setFrequencyBands(newBands);
-      
-      // If in animal mode, update selected animals
-      if (currentMode === 'animals') {
-        const removedAnimal = frequencyBands[index].animal;
-        if (removedAnimal) {
-          setSelectedAnimals(prev => prev.filter(a => a.label !== removedAnimal.label));
-        }
-      }
-      // If in human mode, update selected humans
-      else if (currentMode === 'humans') {
-        const removedHuman = frequencyBands[index].human;
-        if (removedHuman) {
-          setSelectedHumans(prev => prev.filter(h => h.label !== removedHuman.label));
-        }
-      }
-      // If in instrument mode, update selected instruments
-      else if (currentMode === 'instruments') {
-        const removedInstrument = frequencyBands[index].instrument;
-        if (removedInstrument) {
-          setSelectedInstruments(prev => prev.filter(i => i.label !== removedInstrument.label));
-        }
-      }
     }
   };
 
@@ -893,6 +850,15 @@ const checkSignalHealth = (signal, name) => {
             isLoadingInstrumentData={isLoadingInstrumentData}
             selectedInstruments={selectedInstruments}
             onInstrumentSelection={handleInstrumentSelectionWrapper}
+            // Audio Separation Props
+            onSeparationUpload={handleSeparationUpload}
+            onSeparateAudio={handleSeparateAudio}
+            isSeparating={isSeparating}
+            separatedTracks={separatedTracks}
+            separationFile={separationFile}
+            outputFolder={outputFolder}
+            playingSeparatedTrack={playingSeparatedTrack}
+            onPlaySeparatedTrack={playSeparatedTrack}
           />
           
           {/* Frequency Response */}

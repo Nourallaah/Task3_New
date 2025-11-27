@@ -1,3 +1,4 @@
+// components/AudioControls.jsx
 import React, { useRef, useState, useEffect } from 'react';
 import './AudioControls.css';
 
@@ -152,118 +153,9 @@ const AudioControls = ({ inputSignal, outputSignal, sampleRate }) => {
         </button>
       </div>
 
-      {/* Real-time Waveform Visualization */}
-      <div className="playback-waveform">
-        <h4>Now Playing: {currentSignal ? `${currentSignal.toUpperCase()} Signal` : 'None'}</h4>
-        <div className="waveform-container">
-          {currentSignal && (
-            <WaveformVisualizer 
-              signal={currentSignal === 'input' ? inputSignal : outputSignal}
-              currentTime={currentTime}
-              duration={duration}
-              sampleRate={sampleRate}
-              isPlaying={isPlaying}
-            />
-          )}
-        </div>
-      </div>
-
       <div className="audio-info">
         <p>Sample Rate: {sampleRate} Hz</p>
         <p>Duration: {duration.toFixed(2)}s</p>
-      </div>
-    </div>
-  );
-};
-
-// New Component for Real-time Waveform Visualization
-const WaveformVisualizer = ({ signal, currentTime, duration, sampleRate, isPlaying }) => {
-  const canvasRef = useRef(null);
-  const [windowSize, setWindowSize] = useState(1024); // Samples to show
-
-  useEffect(() => {
-    if (!canvasRef.current || !signal.length) return;
-
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const height = canvas.height;
-
-    // Clear canvas
-    ctx.clearRect(0, 0, width, height);
-
-    // Calculate current position in samples
-    const currentSample = Math.floor(currentTime * sampleRate);
-    const startSample = Math.max(0, currentSample - windowSize / 2);
-    const endSample = Math.min(signal.length, startSample + windowSize);
-    
-    // Draw background
-    ctx.fillStyle = '#2C3E50';
-    ctx.fillRect(0, 0, width, height);
-
-    // Draw waveform
-    ctx.strokeStyle = isPlaying ? '#3498DB' : '#7F8C8D';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-
-    const samplesToShow = endSample - startSample;
-    
-    for (let i = 0; i < width; i++) {
-      const sampleIndex = startSample + Math.floor((i / width) * samplesToShow);
-      if (sampleIndex >= signal.length) break;
-      
-      const x = i;
-      const y = (1 - (signal[sampleIndex] + 1) / 2) * height; // Convert -1 to 1 range to 0 to height
-      
-      if (i === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        ctx.lineTo(x, y);
-      }
-    }
-    
-    ctx.stroke();
-
-    // Draw playhead (current position)
-    const playheadX = (currentTime / duration) * width;
-    ctx.strokeStyle = '#E74C3C';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(playheadX, 0);
-    ctx.lineTo(playheadX, height);
-    ctx.stroke();
-
-    // Draw time indicator
-    ctx.fillStyle = '#ECF0F1';
-    ctx.font = '12px Arial';
-    ctx.fillText(formatTime(currentTime), playheadX + 5, 15);
-
-  }, [signal, currentTime, duration, sampleRate, isPlaying, windowSize]);
-
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = (seconds % 60).toFixed(1);
-    return `${mins}:${secs.padStart(4, '0')}`;
-  };
-
-  return (
-    <div className="real-time-waveform">
-      <canvas
-        ref={canvasRef}
-        width={400}
-        height={120}
-      />
-      <div className="waveform-controls">
-        <label>Zoom: </label>
-        <select 
-          value={windowSize} 
-          onChange={(e) => setWindowSize(Number(e.target.value))}
-        >
-          <option value={512}>512 samples</option>
-          <option value={1024}>1024 samples</option>
-          <option value={2048}>2048 samples</option>
-          <option value={4096}>4096 samples</option>
-        </select>
       </div>
     </div>
   );
