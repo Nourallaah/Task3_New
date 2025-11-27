@@ -5,12 +5,16 @@ const Spectrogram = React.memo(({ title, spectrogramData, sampleRate = 44100, si
   const canvasRef = useRef();
 
   useEffect(() => {
-    if (!spectrogramData || !spectrogramData.length || !spectrogramData[0].length) {
-      console.log('No spectrogram data available for:', title);
-      return;
-    }
+    console.log(`Spectrogram ${title} rendering:`, {
+      hasData: !!spectrogramData,
+      isArray: Array.isArray(spectrogramData),
+      rows: spectrogramData?.length,
+      cols: spectrogramData?.[0]?.length
+    });
 
     const canvas = canvasRef.current;
+    if (!canvas) return;
+    
     const ctx = canvas.getContext('2d');
 
     // Set canvas dimensions
@@ -24,8 +28,28 @@ const Spectrogram = React.memo(({ title, spectrogramData, sampleRate = 44100, si
     ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, width, height);
 
+    if (!spectrogramData || !Array.isArray(spectrogramData) || spectrogramData.length === 0) {
+      console.log('No spectrogram data available for:', title);
+      
+      // Show "No Data" message
+      ctx.fillStyle = '#ecf0f1';
+      ctx.font = '16px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('No Spectrogram Data Available', width / 2, height / 2);
+      ctx.fillText(title, width / 2, height / 2 + 30);
+      return;
+    }
+
     const rows = spectrogramData.length;
     const cols = spectrogramData[0].length;
+
+    if (rows === 0 || cols === 0) {
+      ctx.fillStyle = '#ecf0f1';
+      ctx.font = '16px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('Empty Spectrogram Data', width / 2, height / 2);
+      return;
+    }
 
     // Calculate time and frequency information
     const duration = signalLength / sampleRate;
@@ -47,25 +71,43 @@ const Spectrogram = React.memo(({ title, spectrogramData, sampleRate = 44100, si
         }
         value = Math.max(0, Math.min(1, value));
 
-        // Pink/red color scale: grey (low) -> pink -> red (high)
+        // Color mapping based on value
         let r, g, b;
         
-        if (value < 0.3) {
-          // Grey scale for low values
-          const intensity = value / 0.3;
-          r = g = b = Math.floor(80 + intensity * 100);
-        } else if (value < 0.7) {
-          // Pink scale for medium values
-          const intensity = (value - 0.3) / 0.4;
-          r = Math.floor(180 + intensity * 75); // 180-255
-          g = Math.floor(100 + intensity * 50); // 100-150
-          b = Math.floor(150 + intensity * 50); // 150-200
+        if (title.includes('Difference')) {
+          // Difference spectrogram: blue for negative, red for positive
+          if (value < 0.5) {
+            // Blue scale for negative values
+            const intensity = (0.5 - value) * 2;
+            r = Math.floor(50);
+            g = Math.floor(100 + intensity * 100);
+            b = Math.floor(200 + intensity * 55);
+          } else {
+            // Red scale for positive values
+            const intensity = (value - 0.5) * 2;
+            r = Math.floor(200 + intensity * 55);
+            g = Math.floor(100 + intensity * 100);
+            b = Math.floor(50);
+          }
         } else {
-          // Red scale for high values
-          const intensity = (value - 0.7) / 0.3;
-          r = 255;
-          g = Math.floor(150 - intensity * 100); // 150-50
-          b = Math.floor(200 - intensity * 150); // 200-50
+          // Normal spectrogram: grey -> pink -> red
+          if (value < 0.3) {
+            // Grey scale for low values
+            const intensity = value / 0.3;
+            r = g = b = Math.floor(80 + intensity * 100);
+          } else if (value < 0.7) {
+            // Pink scale for medium values
+            const intensity = (value - 0.3) / 0.4;
+            r = Math.floor(180 + intensity * 75);
+            g = Math.floor(100 + intensity * 50);
+            b = Math.floor(150 + intensity * 50);
+          } else {
+            // Red scale for high values
+            const intensity = (value - 0.7) / 0.3;
+            r = 255;
+            g = Math.floor(150 - intensity * 100);
+            b = Math.floor(200 - intensity * 150);
+          }
         }
 
         ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
@@ -81,6 +123,7 @@ const Spectrogram = React.memo(({ title, spectrogramData, sampleRate = 44100, si
     // Draw title
     ctx.fillStyle = '#ecf0f1';
     ctx.font = 'bold 14px Arial';
+    ctx.textAlign = 'left';
     ctx.fillText(title, 10, 20);
 
     // Draw frequency axis (Y-axis)

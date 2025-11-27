@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import EqualizerPanel from './components/EqualizerPanel';
 import SignalViewer from './components/SignalViewer';
@@ -34,7 +34,7 @@ function useDebounce(value, delay) {
   return debouncedValue;
 }
 
-// Enhanced normalization with proper error handling
+// تبسيط دالة normalizeSpectrograms لتحسين الأداء
 const normalizeSpectrograms = (inputSpectrogram, outputSpectrogram) => {
   if (!inputSpectrogram || !outputSpectrogram || 
       !Array.isArray(inputSpectrogram) || !Array.isArray(outputSpectrogram) ||
@@ -47,10 +47,7 @@ const normalizeSpectrograms = (inputSpectrogram, outputSpectrogram) => {
   }
   
   const minRows = Math.min(inputSpectrogram.length, outputSpectrogram.length);
-  const minCols = Math.min(
-    inputSpectrogram[0]?.length || 0, 
-    outputSpectrogram[0]?.length || 0
-  );
+  const minCols = Math.min(inputSpectrogram[0]?.length || 0, outputSpectrogram[0]?.length || 0);
   
   if (minRows === 0 || minCols === 0) {
     return { 
@@ -76,8 +73,9 @@ const normalizeSpectrograms = (inputSpectrogram, outputSpectrogram) => {
   let globalMin = Infinity;
   let globalMax = -Infinity;
   
-  for (let i = 0; i < minRows; i++) {
-    for (let j = 0; j < minCols; j++) {
+  // Sample some points for performance
+  for (let i = 0; i < minRows; i += 2) {
+    for (let j = 0; j < minCols; j += 2) {
       const inputVal = inputDB[i]?.[j];
       const outputVal = outputDB[i]?.[j];
       
@@ -191,22 +189,22 @@ function App() {
   ];
 
   // Reset frequency bands to default
-  const resetFrequencyBands = () => {
+  const resetFrequencyBands = useCallback(() => {
     setFrequencyBands(defaultGenericBands.map(band => ({ ...band, scale: 1.0 })));
-  };
+  }, []);
 
   // Initialize with generic bands
   useEffect(() => {
     resetFrequencyBands();
     generateInitialSignal();
-  }, []);
+  }, [resetFrequencyBands]);
 
   useEffect(() => {
     if (originalSignal.length && debouncedFrequencyBands.length) {
       processAudio();
       updateFrequencyResponse();
     }
-  }, [debouncedFrequencyBands]);
+  }, [debouncedFrequencyBands, originalSignal]);
 
   // Update bands when selection changes for each mode
   useEffect(() => {
@@ -248,23 +246,23 @@ function App() {
     }
   }, [inputSpectrogram, outputSpectrogram]);
 
-  const handleAnimalSelectionWrapper = (animalLabel) => {
+  const handleAnimalSelectionWrapper = useCallback((animalLabel) => {
     setSelectedAnimals(prev => 
       handleAnimalSelection(prev, animalLabel, animalData, 3)
     );
-  };
+  }, [animalData]);
 
-  const handleHumanSelectionWrapper = (humanLabel) => {
+  const handleHumanSelectionWrapper = useCallback((humanLabel) => {
     setSelectedHumans(prev => 
       handleHumanSelection(prev, humanLabel, humanData, 3)
     );
-  };
+  }, [humanData]);
 
-  const handleInstrumentSelectionWrapper = (instrumentLabel) => {
+  const handleInstrumentSelectionWrapper = useCallback((instrumentLabel) => {
     setSelectedInstruments(prev => 
       handleInstrumentSelection(prev, instrumentLabel, instrumentData, 3)
     );
-  };
+  }, [instrumentData]);
 
   // Generate initial signal function
   const generateInitialSignal = async () => {
@@ -332,15 +330,15 @@ function App() {
   };
 
   // Add a new function to reset only when explicitly switching to generic mode
-  const resetToGenericMode = () => {
+  const resetToGenericMode = useCallback(() => {
     resetFrequencyBands();
     setSelectedAnimals([]);
     setSelectedHumans([]);
     setSelectedInstruments([]);
-  };
+  }, [resetFrequencyBands]);
 
   // Update the handleModeChange function to use the new reset function only for generic mode:
-  const handleModeChange = (mode) => {
+  const handleModeChange = useCallback((mode) => {
     setCurrentMode(mode);
     
     if (mode === 'generic') {
@@ -355,7 +353,7 @@ function App() {
       const initialInstruments = instrumentData.modes.custom_generated.slice(0, 3);
       setSelectedInstruments(initialInstruments);
     }
-  };
+  }, [resetToGenericMode, animalData, humanData, instrumentData]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
@@ -399,7 +397,7 @@ function App() {
   };
 
   // Audio Separation Functions
-  const handleSeparationUpload = (event) => {
+  const handleSeparationUpload = useCallback((event) => {
     const file = event.target.files[0];
     if (!file) return;
 
@@ -411,7 +409,7 @@ function App() {
     setSeparationFile(file);
     setSeparatedTracks([]);
     setOutputFolder('');
-  };
+  }, []);
 
   const handleSeparateAudio = async () => {
     if (!separationFile) return;
@@ -445,7 +443,6 @@ function App() {
   // FIXED: Play separated track function
   const playSeparatedTrack = async (track) => {
     try {
-      // التعامل مع كل أنواع البيانات
       let trackName, trackPath;
       
       if (typeof track === 'string') {
@@ -458,11 +455,8 @@ function App() {
       
       setPlayingSeparatedTrack(trackName);
       
-      // تنظيف المسار
       const cleanPath = trackPath.replace(/\\/g, '/');
       const trackUrl = `${API_BASE}/download/${cleanPath}`;
-      
-      console.log('Attempting to play track:', trackUrl);
       
       const audio = new Audio(trackUrl);
       audio.onended = () => setPlayingSeparatedTrack(null);
@@ -486,8 +480,6 @@ function App() {
     
     setIsProcessing(true);
     try {
-      console.log('Processing audio with original signal length:', originalSignal.length);
-      
       const response = await fetch(`${API_BASE}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -504,8 +496,6 @@ function App() {
       
       const data = await response.json();
       if (data.success) {
-        console.log('Processing complete, setting processed signal:', data.processed_signal.length);
-        
         setProcessedSignal(data.processed_signal);
         
         // Update spectrograms with ORIGINAL and PROCESSED signals
@@ -525,24 +515,12 @@ function App() {
   // Modified updateSpectrograms
   const updateSpectrograms = async (inputSignal, outputSignal) => {
     try {
-      console.log('Updating spectrograms - Input length:', inputSignal.length, 'Output length:', outputSignal.length);
-      
       // Ensure we have valid signals
       if (!inputSignal.length || !outputSignal.length) {
-        console.error('Cannot update spectrograms: empty signals');
         return;
       }
 
-      // Always update both spectrograms
-      const inputResponse = await fetch(`${API_BASE}/spectrogram`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          signal: inputSignal, 
-          sample_rate: sampleRate
-        })
-      });
-      
+      // Update output spectrogram only for performance
       const outputResponse = await fetch(`${API_BASE}/spectrogram`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -551,13 +529,6 @@ function App() {
           sample_rate: sampleRate
         })
       });
-      
-      if (inputResponse.ok) {
-        const inputData = await inputResponse.json();
-        if (inputData.success && inputData.spectrogram) {
-          setInputSpectrogram(inputData.spectrogram);
-        }
-      }
       
       if (outputResponse.ok) {
         const outputData = await outputResponse.json();
@@ -627,7 +598,7 @@ function App() {
   };
 
   // Also update the resetEqualizer function to preserve mode-specific bands:
-  const resetEqualizer = () => {
+  const resetEqualizer = useCallback(() => {
     if (currentMode === 'generic') {
       resetFrequencyBands();
     } else {
@@ -637,27 +608,27 @@ function App() {
       }));
       setFrequencyBands(resetBands);
     }
-  };
+  }, [currentMode, frequencyBands, resetFrequencyBands]);
 
-  const updateBand = (index, field, value) => {
+  const updateBand = useCallback((index, field, value) => {
     const newBands = [...frequencyBands];
     newBands[index] = {
       ...newBands[index],
       [field]: parseFloat(value) || 0
     };
     setFrequencyBands(newBands);
-  };
+  }, [frequencyBands]);
 
-  const handleSliderChange = (index, value) => {
+  const handleSliderChange = useCallback((index, value) => {
     updateBand(index, 'scale', value);
-  };
+  }, [updateBand]);
 
-  const removeBand = (index) => {
+  const removeBand = useCallback((index) => {
     if (frequencyBands.length > 1) {
       const newBands = frequencyBands.filter((_, i) => i !== index);
       setFrequencyBands(newBands);
     }
-  };
+  }, [frequencyBands]);
 
   const formatFrequency = (freq) => {
     if (freq >= 1000) {

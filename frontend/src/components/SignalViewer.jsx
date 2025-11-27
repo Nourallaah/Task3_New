@@ -9,7 +9,25 @@ const SignalViewer = ({ title, signal, timeAxis, color = '#3498DB', sampleRate =
   const [fftData, setFftData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Only fetch FFT data from backend - NO frontend calculation
+  // Downsample data for better performance
+  const downsampleData = (data, maxPoints = 1000) => {
+    if (!data || data.length === 0) return data;
+    
+    if (data.length <= maxPoints) {
+      return data;
+    }
+
+    const factor = Math.ceil(data.length / maxPoints);
+    const downsampled = [];
+    
+    for (let i = 0; i < data.length; i += factor) {
+      downsampled.push(data[i]);
+    }
+    
+    return downsampled;
+  };
+
+  // Only fetch FFT data from backend for frequency domain
   useEffect(() => {
     if (type === 'frequency' && signal.length > 0) {
       fetchFFTData();
@@ -42,7 +60,6 @@ const SignalViewer = ({ title, signal, timeAxis, color = '#3498DB', sampleRate =
       }
     } catch (error) {
       console.error('Error fetching FFT data:', error);
-      // NO FALLBACK CALCULATION - rely on backend only
       setFftData(null);
     } finally {
       setIsLoading(false);
@@ -50,9 +67,26 @@ const SignalViewer = ({ title, signal, timeAxis, color = '#3498DB', sampleRate =
   };
 
   useEffect(() => {
-    if (!signal.length) {
+    if (!signal || signal.length === 0) {
       const svg = select(svgRef.current);
       svg.selectAll("*").remove();
+      
+      // Show "No Data" message
+      const margin = { top: 25, right: 15, bottom: 35, left: 40 };
+      const width = 400 - margin.left - margin.right;
+      const height = 200 - margin.top - margin.bottom;
+
+      const g = svg.append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      g.append("text")
+        .attr("x", width / 2)
+        .attr("y", height / 2)
+        .attr("text-anchor", "middle")
+        .style("fill", "#BDC3C7")
+        .style("font-size", "12px")
+        .text("No Signal Data");
+
       return;
     }
 
@@ -60,8 +94,8 @@ const SignalViewer = ({ title, signal, timeAxis, color = '#3498DB', sampleRate =
     svg.selectAll("*").remove();
 
     const margin = { top: 25, right: 15, bottom: 35, left: 40 };
-    const width = 400 - margin.left - margin.right; // Increased width
-    const height = 200 - margin.top - margin.bottom; // Increased height
+    const width = 400 - margin.left - margin.right;
+    const height = 200 - margin.top - margin.bottom;
 
     const g = svg.append("g")
       .attr("transform", `translate(${margin.left},${margin.top})`);
@@ -150,9 +184,14 @@ const SignalViewer = ({ title, signal, timeAxis, color = '#3498DB', sampleRate =
         .text("Amplitude");
 
     } else {
-      // Time domain display
+      // Time domain display - استخدام downsampling للأداء
+      const displaySignal = downsampleData(signal, 1000);
+      const displayTimeAxis = timeAxis && timeAxis.length === signal.length 
+        ? downsampleData(timeAxis, 1000)
+        : Array.from({ length: displaySignal.length }, (_, i) => i / sampleRate);
+
       const xScale = scaleLinear()
-        .domain([0, timeAxis[timeAxis.length - 1] || 1])
+        .domain([0, displayTimeAxis[displayTimeAxis.length - 1] || 1])
         .range([0, width]);
 
       const yScale = scaleLinear()
@@ -160,12 +199,12 @@ const SignalViewer = ({ title, signal, timeAxis, color = '#3498DB', sampleRate =
         .range([height, 0]);
 
       const lineGenerator = line()
-        .x((d, i) => xScale(timeAxis[i]))
+        .x((d, i) => xScale(displayTimeAxis[i]))
         .y(d => yScale(d))
         .curve(curveBasis);
 
       g.append("path")
-        .datum(signal)
+        .datum(displaySignal)
         .attr("class", "signal-line")
         .attr("fill", "none")
         .attr("stroke", color)
@@ -196,22 +235,7 @@ const SignalViewer = ({ title, signal, timeAxis, color = '#3498DB', sampleRate =
         .text("Amplitude");
     }
 
-    // Add grid
-    g.append("g")
-      .attr("class", "grid")
-      .attr("transform", type === 'frequency' ? `translate(0,${height})` : `translate(0,${height})`)
-      .call(axisBottom(type === 'frequency' ? scaleLog().domain([20, 20000]).range([0, width]) : scaleLinear().domain([0, timeAxis[timeAxis.length - 1] || 1]).range([0, width]))
-        .tickSize(-height)
-        .tickFormat("")
-      );
-
-    g.append("g")
-      .attr("class", "grid")
-      .call(axisLeft(type === 'frequency' ? scaleLinear().domain([0, max(fftData?.magnitude || [0]) * 1.1 || 0.1]).range([height, 0]) : scaleLinear().domain([-1, 1]).range([height, 0]))
-        .tickSize(-width)
-        .tickFormat("")
-      );
-
+    // Add title
     g.append("text")
       .attr("x", width / 2)
       .attr("y", -8)
@@ -225,10 +249,14 @@ const SignalViewer = ({ title, signal, timeAxis, color = '#3498DB', sampleRate =
 
   return (
     <div className="signal-viewer">
+      <div className="signal-info">
+        <span>Points: {signal?.length || 0}</span>
+        <span>Type: {type}</span>
+      </div>
       <svg
         ref={svgRef}
-        width={440} // Increased from 340
-        height={240} // Increased from 160
+        width={440}
+        height={240}
       />
     </div>
   );
